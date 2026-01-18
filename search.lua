@@ -39,9 +39,18 @@ local function update_marker_selection()
     last_selected_text = selected_text
 
     if selected_text and selected_text ~= "" and string.len(selected_text) >= 1 then
-      local current_pos = buffer.selection_start
-        and buffer.selection_start - 1
-        or buffer.current_pos
+      local current_pos = buffer.current_pos
+
+      if buffer.selection_start then
+        local prev_pos = buffer:position_before(buffer.selection_start)
+
+        if prev_pos ~= -1 then
+          current_pos = prev_pos
+        else
+          current_pos = buffer.selection_start
+        end
+      end
+
       step_to_next(current_pos, next)
     end
   end
@@ -65,10 +74,16 @@ local function incremental_search(_next)
   end
 
   if not _next and buffer.selection_start then
-    current_pos = buffer.selection_start - 1
+    local prev_pos = buffer:position_before(buffer.selection_start)
+
+    if prev_pos ~= -1 then
+      current_pos = prev_pos
+    else
+      current_pos = -1
+    end
   end
 
-  local found_start = step_to_next(current_pos, _next)
+  local found_start = current_pos == -1 and -1 or step_to_next(current_pos, _next)
 
   if found_start == -1 and not search_wrapped then
     search_wrapped = true
