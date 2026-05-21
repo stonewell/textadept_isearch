@@ -1,12 +1,13 @@
 local helper = require('isearch.helper')
 
 local last_selected_text
-local next = true
+local is_forward = true
 local regex_search = false
 local search_wrapped = false
 local search_history = {}
 local current_search_history
 local hide_func
+local search_keys
 
 local function step_to_next(current_pos, _next)
   buffer:goto_pos(current_pos)
@@ -38,7 +39,7 @@ local function update_marker_selection()
   if selected_text ~= last_selected_text then
     last_selected_text = selected_text
 
-    if selected_text and selected_text ~= "" and string.len(selected_text) >= 1 then
+    if selected_text and selected_text ~= "" then
       local current_pos = buffer.current_pos
 
       if buffer.selection_start then
@@ -51,7 +52,7 @@ local function update_marker_selection()
         end
       end
 
-      step_to_next(current_pos, next)
+      step_to_next(current_pos, is_forward)
     end
   end
 end
@@ -93,9 +94,12 @@ local function incremental_search(_next)
       buffer:document_end()
     end
 
-    ui.statusbar_text = "Search Wrapped"
-
-    step_to_next(buffer.current_pos, _next)
+    local wrapped_found = step_to_next(buffer.current_pos, _next)
+    if wrapped_found == -1 then
+      ui.statusbar_text = "No Result Found"
+    else
+      ui.statusbar_text = "Search Wrapped"
+    end
   else
     if found_start == -1 then
       ui.statusbar_text = "No Result Found"
@@ -143,7 +147,7 @@ end
 
 local function start_incremental_search(_next, _regex_search, _keys)
   helper.set_current_mode(helper.Modes.SEARCH)
-  next = _next ~= nil and _next or true
+  is_forward = _next ~= nil and _next or true
   regex_search = _regex_search ~= nil and _regex_search or false
   search_wrapped = false
   current_search_history = #search_history
@@ -157,12 +161,11 @@ local function start_incremental_search(_next, _regex_search, _keys)
       ['ctrl+g'] = incremental_cancel,
     }, _keys or {})
 
+  events.connect(events.COMMAND_TEXT_CHANGED, update_marker_selection)
   ui.command_entry.run('I-Search:', incremental_end, search_keys)
   hide_func = keys._command_entry['esc']
   keys._command_entry['esc'] = keys._command_entry['ctrl+g']
 end
-
-events.connect(events.COMMAND_TEXT_CHANGED, update_marker_selection)
 
 -- External API:
 local M = {}

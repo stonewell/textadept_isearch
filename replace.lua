@@ -17,13 +17,13 @@ local re_patt = lpeg.Cs(P{
   E = P('\\E') / '', esc = '\\' * C(1) / esc
 })
 --- Returns text with the following sequences unescaped:
--- - "\uXXXX" sequences replaced with the equivalent UTF-8 character.
+-- - "\uXXXX" sequences (handled via gsub before lpeg) replaced with the equivalent UTF-8 character.
 -- - "\d" sequences replaced with the text of capture number *d* from the regular expression
 --	(or the entire match for *d* = 0).
 -- - "\U" and "\L" sequences convert everything up to the next "\U", "\L", or "\E" to uppercase
 --	and lowercase, respectively.
--- - "\u" and "\l" sequences convert the next character to uppercase and lowercase, respectively.
---	They may appear within "\U" and "\L" constructs.
+-- - "\u" and "\l" sequences (handled by lpeg) convert the next character to uppercase and
+--	lowercase, respectively. They may appear within "\U" and "\L" constructs.
 -- @param text String text to unescape.
 -- @return unescaped text
 local function unescape(text)
@@ -42,32 +42,50 @@ local function replace_all(ftext, rtext)
   if ftext == '' then return end
 
   local count = 0
-  buffer.indicator_current = INDIC_REPLACE
+  local replace_in_sel = buffer.selection_start ~= buffer.selection_end
+  if replace_in_sel then buffer.indicator_current = INDIC_REPLACE end
 
+  buffer.search_flags = replace_regex and buffer.FIND_REGEXP or 0
   buffer:begin_undo_action()
 
   for i = 1, buffer.selections do
     local s, e = buffer.selection_n_start[i], buffer.selection_n_end[i]
-    buffer:indicator_fill_range(e, 1)
-    local EOF = e == buffer.length + 1 -- no indicator at EOF
 
-    -- Perform the search and replace.
-    buffer.search_flags = replace_regex and buffer.FIND_REGEXP or 0
-    buffer:set_target_range(s, buffer.length + 1)
-    while buffer:search_in_target(ftext) ~= -1 and
-      (buffer.target_end <= buffer:indicator_end(INDIC_REPLACE, s) or EOF) do
-      local offset = buffer.target_start ~= buffer.target_end and 0 or 1 -- for preventing loops
-      if replace_regex and ftext:find('^^') and offset == 0 then offset = 1 end -- avoid extra matches
-      buffer:replace_target(not replace_regex and rtext or unescape(rtext))
-      count = count + 1
-      if buffer.target_end + offset > buffer.length then break end
-      buffer:set_target_range(buffer.target_end + offset, buffer.length + 1)
+    if not replace_in_sel then
+      -- No selection: replace from cursor to EOF, then wrap BOF to cursor.
+      local cursor = s
+      local function do_replace_range(range_start, range_end)
+        buffer:set_target_range(range_start, range_end)
+        while buffer:search_in_target(ftext) ~= -1 do
+          local offset = buffer.target_start ~= buffer.target_end and 0 or 1
+          if replace_regex and ftext:find('^^') and offset == 0 then offset = 1 end
+          buffer:replace_target(not replace_regex and rtext or unescape(rtext))
+          count = count + 1
+          if buffer.target_end + offset > buffer.length then break end
+          buffer:set_target_range(buffer.target_end + offset, range_end)
+        end
+      end
+      do_replace_range(cursor, buffer.length + 1) -- pass 1: cursor → EOF
+      do_replace_range(1, cursor)                 -- pass 2: BOF → cursor (wrap)
+    else
+      -- Selection exists: replace within the selected region.
+      buffer:indicator_fill_range(e, 1)
+      local EOF = e == buffer.length + 1 -- no indicator at EOF
+      buffer:set_target_range(s, buffer.length + 1)
+      while buffer:search_in_target(ftext) ~= -1 and
+        (buffer.target_end <= buffer:indicator_end(INDIC_REPLACE, s) or EOF) do
+        local offset = buffer.target_start ~= buffer.target_end and 0 or 1
+        if replace_regex and ftext:find('^^') and offset == 0 then offset = 1 end
+        buffer:replace_target(not replace_regex and rtext or unescape(rtext))
+        count = count + 1
+        if buffer.target_end + offset > buffer.length then break end
+        buffer:set_target_range(buffer.target_end + offset, buffer.length + 1)
+      end
+      -- Restore any original selection.
+      e = buffer:indicator_end(INDIC_REPLACE, s)
+      buffer.selection_n_start[i], buffer.selection_n_end[i] = s, e > 1 and e or buffer.length + 1
+      if e > 1 then buffer:indicator_clear_range(e, 1) end
     end
-
-    -- Restore any original selection.
-    e = buffer:indicator_end(INDIC_REPLACE, s)
-    buffer.selection_n_start[i], buffer.selection_n_end[i] = s, e > 1 and e or buffer.length + 1
-    if e > 1 then buffer:indicator_clear_range(e, 1) end
   end
   buffer:end_undo_action()
 
@@ -85,11 +103,11 @@ end
 local function get_replace_text()
   local t = ui.command_entry:get_text()
 
-  if t and t ~= "" and string.len(t) >= 1 then
+  if t and t ~= "" then
     search_text = t
 
     ui.command_entry.run(
-      buffer.selection_start
+      buffer.selection_start ~= buffer.selection_end
         and 'Replace string in region ' .. t .. ' with: '
         or 'Replace string ' .. t .. ' with: ',
       do_replace_text,
@@ -106,7 +124,10 @@ local function start_replace(_regex_search, _keys)
   replace_keys = helper.merge_tables_overwrite(
     replace_keys, _keys or {})
 
-  ui.command_entry.run(buffer.selection_start and 'Replace string in region' or 'Replace string:',
+  ui.command_entry.run(
+    buffer.selection_start ~= buffer.selection_end
+    and 'Replace string in region'
+    or 'Replace string:',
                        get_replace_text,
                        replace_keys)
 end

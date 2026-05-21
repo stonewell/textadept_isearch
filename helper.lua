@@ -10,7 +10,7 @@ local current_mode = M.Modes.NONE
 
 function M.merge_tables_overwrite(t1, t2)
     for k, v in pairs(t2) do
-        t1[k] = v -- Assign value, overwrites if key 'k' already exists in t1
+        t1[k] = v
     end
     return t1
 end
@@ -19,7 +19,7 @@ function M.remove_by_value(tab, value)
     for i, v in ipairs(tab) do
         if v == value then
             table.remove(tab, i)
-            return true -- Exit after the first match (optional)
+            return true
         end
     end
     return false
